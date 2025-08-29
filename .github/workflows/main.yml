@@ -1,0 +1,52 @@
+name: AUR Package Builder
+
+on:
+  workflow_dispatch:
+    inputs:
+      aur_repo:
+        description: 'Git URL of the AUR package'
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+
+    steps:
+      # 1. Install base-devel & git
+      - name: Install base-devel & git
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --needed --noconfirm base-devel git sudo
+
+      # 2. Create non-root builder user
+      - name: Add build user
+        run: |
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+      # 3. Fix permissions so builder can write in current directory
+      - name: Fix permissions
+        run: chown -R builder:builder .
+  
+      # 4. Clone the AUR package
+      - name: Clone AUR repository
+        run: |
+          sudo -u builder git clone ${{ github.event.inputs.aur_repo }} aur-package
+          cd aur-package
+
+      # 5. Build the package
+      - name: Build package
+        run: |
+          cd aur-package
+          sudo -u builder makepkg -sf --noconfirm
+          # Extract package name and version from PKGBUILD
+          PKG_NAME=$(grep '^pkgname=' PKGBUILD | cut -d= -f2)
+          PKG_VER=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
+          echo "PKG_FULL_NAME=${PKG_NAME}-${PKG_VER}" >> $GITHUB_ENV
+
+      # 6. Upload the built package
+      - name: Upload built package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PKG_FULL_NAME }}
+          path: "aur-package/*.pkg.tar.zst"
